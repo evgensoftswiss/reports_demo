@@ -188,11 +188,12 @@ function fmtDate(iso){
 }
 function showError(message){$('errorBanner').textContent=message||'Ошибка';$('errorBanner').style.display='block';}
 function hideError(){$('errorBanner').style.display='none';}
-function openEmailModal(){ $('emailModal').classList.add('open'); $('emailInput').value=window.DemoMask?.email(state.email)||state.email||''; $('calendarInput').value=state.calendarUrl||''; setTimeout(()=>$('emailInput').focus(),0); }
+function openEmailModal(){ $('emailModal').classList.add('open'); $('emailInput').value=window.DemoMask?.email(state.email)||state.email||''; $('calendarInput').value=window.DemoMask?.calendarUrl(state.calendarUrl)||state.calendarUrl||''; setTimeout(()=>$('emailInput').focus(),0); }
 async function saveEmail(){
   const enteredEmail=$('emailInput').value.trim().toLowerCase();
   const email=enteredEmail===window.DemoMask?.email(state.email)?state.email:enteredEmail;
-  const calendarUrl=$('calendarInput').value.trim();
+  const enteredCalendarUrl=$('calendarInput').value.trim();
+  const calendarUrl=window.DemoMask?.restoreCalendarUrl(enteredCalendarUrl,state.calendarUrl)||enteredCalendarUrl;
   if(!email || !email.includes('@')){ showError('Введите корректный email.'); return; }
   if(calendarUrl && !/^https?:\/\//i.test(calendarUrl)){ showError('Ссылка на календарь должна начинаться с http:// или https://'); return; }
   state.email=email;
@@ -1105,7 +1106,7 @@ $('includeWorklogUser')?.addEventListener('change',async e=>{
   await loadData();
 });
 $('changeEmail').addEventListener('click',openEmailModal);
-$('planningHome').addEventListener('click',()=>{window.location.href='https://evgensoftswiss.github.io/reports/'});
+$('planningHome').addEventListener('click',()=>{window.location.href='https://evgensoftswiss.github.io/reports_demo/'});
 $('emailSave').addEventListener('click',saveEmail);
 $('emailCancel').addEventListener('click',()=>{$('emailModal').classList.remove('open');hideError();});
 $('emailLogout').addEventListener('click',()=>{sessionStorage.removeItem('weeklyPlanner.accessToken');sessionStorage.removeItem('weeklyPlanner.user');localStorage.removeItem('weeklyPlanner.accessToken');localStorage.removeItem('weeklyPlanner.user');localStorage.removeItem('weeklyPlanner.sessionExpiresAt');window.location.replace(new URL('index.html',window.location.href))});

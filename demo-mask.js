@@ -3,16 +3,22 @@
 (() => {
   const emailPattern = /\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b/gi;
   const emailIndexes = new Map();
+  const emailByIndex = new Map();
   const nameIndexes = new Map();
   const taskIndexes = new Map();
   const taskTitles = new Map();
+  const meetingIndexes = new Map();
   const linkValues = new WeakMap();
   const emailValues = new WeakMap();
   const summaryLabels = new WeakMap();
+  const meetingValues = new WeakMap();
+  const calendarUrlValues = new WeakMap();
+  const meetingCellValues = new WeakMap();
   const registeredLinks = new WeakSet();
   const registeredSummaries = new WeakSet();
   let nextEmailIndex = 0;
   let nextTaskIndex = 0;
+  let nextMeetingIndex = 0;
   let updateQueued = false;
 
   function emailIndex(value) {
@@ -22,9 +28,14 @@
     if (fakeMatch) {
       const index = Number(fakeMatch[1]);
       emailIndexes.set(normalized, index);
+      if (!emailByIndex.has(index)) emailByIndex.set(index, normalized);
       return index;
     }
-    if (!emailIndexes.has(normalized)) emailIndexes.set(normalized, ++nextEmailIndex);
+    if (!emailIndexes.has(normalized)) {
+      const index = ++nextEmailIndex;
+      emailIndexes.set(normalized, index);
+      emailByIndex.set(index, normalized);
+    }
     return emailIndexes.get(normalized);
   }
 
@@ -47,6 +58,22 @@
     return taskIndexes.get(normalized);
   }
 
+  function meetingLabel(value) {
+    const normalized = String(value || "").trim();
+    if (!normalized) return "";
+    const key = normalized.toLowerCase();
+    if (!meetingIndexes.has(key)) meetingIndexes.set(key, `Meet${++nextMeetingIndex}`);
+    return meetingIndexes.get(key);
+  }
+
+  function maskCalendarUrl(value) {
+    return value ? "https://calendar.example.invalid/hidden.ics" : "";
+  }
+
+  function restoreCalendarUrl(value, original) {
+    return value === maskCalendarUrl(original) ? original : value;
+  }
+
   function taskIdentity(element) {
     const href = linkValues.get(element)?.href || element.getAttribute("href") || "";
     const key = href.match(/\/browse\/([^/?#]+)/i)?.[1];
@@ -54,7 +81,7 @@
   }
 
   function registerLinkedTaskTitles(root) {
-    root.querySelectorAll(".task-link, .issue-key, a[href*='/browse/']").forEach((link) => {
+    root.querySelectorAll(".task-link, .issue-key, .issue-drawer-key, a[href*='/browse/']").forEach((link) => {
       if (registeredLinks.has(link)) return;
       linkValues.set(link, { href: link.getAttribute("href") || "", text: link.textContent.trim() });
       registeredLinks.add(link);
@@ -68,11 +95,11 @@
       if (summary) taskTitles.set(summary, label);
     });
 
-    root.querySelectorAll(".issue-summary").forEach((summary) => {
+    root.querySelectorAll(".issue-summary, .issue-drawer-title").forEach((summary) => {
       if (registeredSummaries.has(summary)) return;
       registeredSummaries.add(summary);
       const block = summary.closest(".issue-block");
-      const key = block?.querySelector(".issue-key");
+      const key = block?.querySelector(".issue-key") || summary.closest(".issue-drawer")?.querySelector(".issue-drawer-key");
       const original = summary.getAttribute("title") || summary.textContent.trim();
       const label = key ? `Задача ${taskIndex(taskIdentity(key))}` : `Задача ${taskIndex(original)}`;
       taskTitles.set(original.trim(), label);
@@ -97,7 +124,36 @@
     for (const [actual, label] of taskTitles) {
       if (actual) text = replaceWholePhrase(actual, label);
     }
+    for (const [actual, label] of meetingIndexes) {
+      if (actual) text = replaceWholePhrase(actual, label);
+    }
     return text.replace(emailPattern, (email) => fakeEmail(email));
+  }
+
+  function unmaskKnownText(value) {
+    let text = String(value || "");
+    for (const [actual, label] of nameIndexes) {
+      if (actual) text = text.replace(new RegExp(`\\bUser${label}\\b`, "g"), actual);
+    }
+    for (const [actual, label] of taskTitles) {
+      if (actual) text = text.split(label).join(actual);
+    }
+    for (const [actual, label] of meetingIndexes) {
+      if (actual) text = text.split(label).join(actual);
+    }
+    text = text.replace(/\buser(\d+)@gmail\.com\b/gi, (alias, index) => emailByIndex.get(Number(index)) || alias);
+    return text;
+  }
+
+  function maskEditableValues(root) {
+    root.querySelectorAll('input:not([type="date"]):not([type="number"]):not([type="password"]):not([type="email"]):not([type="url"]), textarea').forEach((field) => {
+      if (field.id === "emailInput" || field.id === "emailCodeInput" || field.matches('[data-meeting-prop="summary"], [data-meeting-field="summary"]')) return;
+      const masked = maskKnownText(field.value);
+      if (masked !== field.value) {
+        field.value = masked;
+        if (field instanceof HTMLTextAreaElement) field.textContent = masked;
+      }
+    });
   }
 
   function apply(root) {
@@ -133,7 +189,7 @@
 
     root.querySelectorAll(".user-avatar").forEach((avatar) => avatar.remove());
 
-    root.querySelectorAll(".issue-key, .task-link, a[href*='/browse/']").forEach((link) => {
+    root.querySelectorAll(".issue-key, .issue-drawer-key, .task-link, a[href*='/browse/']").forEach((link) => {
       const label = `Задача ${taskIndex(taskIdentity(link))}`;
       setText(link, label);
       link.setAttribute("href", "#");
@@ -141,12 +197,47 @@
       link.removeAttribute("rel");
     });
 
-    root.querySelectorAll(".issue-summary").forEach((summary) => {
+    root.querySelectorAll(".issue-summary, .issue-drawer-title").forEach((summary) => {
       const block = summary.closest(".issue-block");
-      const key = block?.querySelector(".issue-key");
+      const key = block?.querySelector(".issue-key") || summary.closest(".issue-drawer")?.querySelector(".issue-drawer-key");
       const label = summaryLabels.get(summary) || (key ? `Задача ${taskIndex(taskIdentity(key))}` : `Задача ${taskIndex(summary.textContent)}`);
       setText(summary, label);
       summary.setAttribute("title", label);
+    });
+
+    root.querySelectorAll('input[data-meeting-prop="summary"], input[data-meeting-field="summary"]').forEach((input) => {
+      const displayed = input.value;
+      let stored = meetingValues.get(input);
+      if (!stored) {
+        stored = { original: displayed, label: meetingLabel(displayed) };
+      } else if (displayed !== stored.label) {
+        stored = { original: displayed, label: meetingLabel(displayed) };
+      }
+      meetingValues.set(input, stored);
+      if (displayed && stored.label) {
+        input.value = stored.label;
+        input.setAttribute("value", stored.label);
+      }
+    });
+
+    root.querySelectorAll("table.meetings tbody tr td:first-child").forEach((cell) => {
+      const displayed = cell.textContent.trim();
+      let stored = meetingCellValues.get(cell);
+      if (!stored || displayed !== stored.label) {
+        stored = { original: displayed, label: meetingLabel(displayed) };
+        meetingCellValues.set(cell, stored);
+      }
+      if (displayed && stored.label) setText(cell, stored.label);
+    });
+
+    root.querySelectorAll("#calendarInput, #profileCalendar").forEach((input) => {
+      const displayed = input.value;
+      let original = calendarUrlValues.get(input);
+      if (original === undefined || displayed !== maskCalendarUrl(original)) {
+        original = displayed;
+        calendarUrlValues.set(input, original);
+      }
+      if (original) input.value = maskCalendarUrl(original);
     });
 
     const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
@@ -166,6 +257,8 @@
       }
     });
 
+    maskEditableValues(root);
+
     root.querySelectorAll("a[href]").forEach((link) => {
       if (/\/browse\/[^/?#]+/i.test(link.getAttribute("href") || "")) {
         link.setAttribute("href", "#");
@@ -175,7 +268,35 @@
     });
   }
 
-  window.DemoMask = Object.freeze({ email: fakeEmail, name: (name, email) => `User${registerUser(email, name)}` });
+  window.DemoMask = Object.freeze({
+    email: fakeEmail,
+    name: (name, email) => `User${registerUser(email, name)}`,
+    meeting: meetingLabel,
+    calendarUrl: maskCalendarUrl,
+    restoreCalendarUrl,
+    unmaskText: unmaskKnownText
+  });
+
+  document.addEventListener("input", (event) => {
+    const field = event.target;
+    if (!(field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement)) return;
+    if (field.matches('[data-meeting-prop="summary"], [data-meeting-field="summary"]')) {
+      queueMicrotask(() => {
+        if (field.isConnected) apply(field.parentElement || document);
+      });
+      return;
+    }
+    if (field.id === "emailInput" || field.id === "emailCodeInput") return;
+    const original = unmaskKnownText(field.value);
+    if (original === field.value) return;
+    field.value = original;
+    queueMicrotask(() => {
+      if (!field.isConnected) return;
+      const masked = maskKnownText(field.value);
+      field.value = masked;
+      if (field instanceof HTMLTextAreaElement) field.textContent = masked;
+    });
+  }, true);
 
   const observe = () => {
     apply(document);
